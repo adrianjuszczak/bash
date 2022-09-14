@@ -1,0 +1,12 @@
+[
+  {
+    "directory": "/home/anjk/Workspace/HCP2/hcp2-lum/helper_scripts/test/perform_static_analysis",
+    "command": "/usr/bin/g++ -Wall -c -o logger.o logger.cpp",
+    "file": "/home/anjk/Workspace/HCP2/hcp2-lum/helper_scripts/test/perform_static_analysis/logger.cpp"
+  },
+  {
+    "directory": "/home/anjk/Workspace/HCP2/hcp2-lum/helper_scripts/test/perform_static_analysis",
+    "command": "/usr/bin/g++ -Wall -c -o main.o main.cpp",
+    "file": "/home/anjk/Workspace/HCP2/hcp2-lum/helper_scripts/test/perform_static_analysis/main.cpp"
+  }
+]

@@ -1,0 +1,7 @@
+{
+  "clang-tidy": {
+    "active-checkers": "-clang-analyzer-cplusplus*",
+    "header-filter": "=.*",
+    "compilation-options": ""
+  }
+}
