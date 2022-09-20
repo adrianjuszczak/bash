@@ -1,5 +1,5 @@
 #!/bin/bash
-ARGS=$(getopt -o ahvV --long active-checkers:,all-files,clang-config:,conan-dir:,git-branch:,help,lum-build-dir:,manual:,repo-dir:,summary,output-dir:,output-file:,verbose-level:,version -- "$@") || exit
+ARGS=$(getopt -o ahvV --long ,all-files,clang-config:,conan-dir:,git-branch:,help,lum-build-dir:,manual:,repo-dir:,summary,output-dir:,log-file:,verbose-level:,version -- "$@") || exit
 
 GIT_BRANCH=""
 HCP2_DIR="$(dirname "$(dirname "$(realpath "$0")")")"
@@ -8,16 +8,14 @@ CONAN_CACHE_DIR="/home/${USER}/.conan/data"
 LUM_BUILD_DIR=${HCP2_DIR}/e3_comp_lum/build
 MANUAL_ANALYSIS_DIR=""
 REPORTS_DIRECTORY=""
-OUTPUT_FILE_NAME=""
+LOG_FILE=""
 SUMMARY_FLAG="false"
 declare -i VERBOSE_LEVEL="0"
 
 CHECK_ALL_FILES=false
-ACTIVE_CHECKERS='\"cppcoreguidelines*\"'
 
 call_according_to_verbose_level() {
-    if [ "$VERBOSE_LEVEL" -gt 0 ]
-    then
+    if [ "$VERBOSE_LEVEL" -gt 0 ]; then
         [ "$VERBOSE_LEVEL" = 1 ] && { $1 "--verbose" "${@: 2}"; } || { [ "$VERBOSE_LEVEL" = 2 ] && { set -x; "$@"; } }
     else
         "$@"
@@ -42,7 +40,7 @@ merge_compile_commands() {
     local MANUAL_ANALYSIS_DIR=$4
     local SEARCH_DIRECTORY="$CONAN_CACHE_DIR $LUM_BUILD_DIR"
     
-    [ "$MANUAL_ANALYSIS_DIR" = "" ] || { SEARCH_DIRECTORY="$MANUAL_ANALYSIS_DIR"; }
+    [ -z "$MANUAL_ANALYSIS_DIR" ] || { SEARCH_DIRECTORY="$MANUAL_ANALYSIS_DIR"; }
     local PATHS_TO_COMPILE_COMMANDS=$(find $SEARCH_DIRECTORY -type f -name '*compile_commands.json*')
     
     [ "$VERBOSE_LEVEL" != "0" ] && { echo "Paths to compile commands json files:"; echo "$PATHS_TO_COMPILE_COMMANDS"; }
@@ -59,8 +57,8 @@ collect_last_modified_files() {
     
     if [ "$MANUAL_ANALYSIS_DIR" = "" ]; then
         local LAST_COMMIT_SHA=$(git -C "$HCP2_DIR" log origin/deliveries -1 | sed 's/commit //p' | head -1)
-        # grep: exclude files with ending different than .cpp, .h, .hpp
-        # sed: removes redundant space inp aths 
+        # grep: ignore all files, except those with ending .cpp, .h, .hpp
+        # sed: removes redundant spaces in paths 
         local PATHS_TO_ANALYZED_FILES=$(git diff --name-status "$LAST_COMMIT_SHA" | grep -v "\.py\|.cfg\|.json\|.txt\|.yml" | grep -e "\\.cpp\|\.h\|\.hpp"$ | sed -E 's/[A-Z][[:space:]]+//g')
         [ "$CHECK_ALL_FILES" = false ] && PATHS_TO_ANALYZED_FILES=$(echo "$PATHS_TO_ANALYZED_FILES" | grep -v "test\|mock")
     else
@@ -79,13 +77,11 @@ get_keys_from_json() {
     local MANUAL_ANALYSIS_DIR=$4
     local EXTRACTED_JSON_KEYS=""
     
-    for i in $(collect_last_modified_files "$HCP2_DIR" "$CHECK_ALL_FILES" "$MANUAL_ANALYSIS_DIR") # collecting keys needed for later files extracting process
-    do
+    for i in $(collect_last_modified_files "$HCP2_DIR" "$CHECK_ALL_FILES" "$MANUAL_ANALYSIS_DIR"); do  # collecting keys needed for later files extracting process
         EXTRACTED_JSON_KEYS=$EXTRACTED_JSON_KEYS' '$(grep -Eo "\"file\".*${i}" "$REPORTS_DIRECTORY"/compile_commands.json | sed 's/"file": "//g')
     done
-    # remove duplicate
-    EXTRACTED_JSON_KEYS=$(echo "$EXTRACTED_JSON_KEYS" | xargs -n1 | sort -u | xargs);
-    # [ "$VERBOSE_LEVEL" != "0" ] && { echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"; echo "Extracted JSON keys:"; echo "$EXTRACTED_JSON_KEYS"; }
+
+    EXTRACTED_JSON_KEYS=$(echo "$EXTRACTED_JSON_KEYS" | xargs -n1 | sort -u | xargs);     # remove duplicate
     
     echo "$EXTRACTED_JSON_KEYS"
 }
@@ -100,23 +96,27 @@ ${FONT_BOLD}NAME
     ${FONT_NORMAL}PERFORM STATIC ANALYSIS
 
 ${FONT_BOLD}SYNOPSIS
-    ${FONT_NORMAL}perform_static_analysis [-a] [-h] [-v] [-V] [--active-checkers] [--all-files] [--compile-commands-file] [--conan-dir] [--git-branch] [--help] [--lum-build-dir] [--repo-dir]
-    [--summary] [--output-file] [--verbose-level] [--version] --output-dir
+    ${FONT_NORMAL}perform_static_analysis [-a] [-h] [-v] [-V] [--all-files] [--clang-config] [--compile-commands-file] [--conan-dir] [--git-branch] [--help] [--manual] 
+    [--lum-build-dir] [--repo-dir] [--summary] [--log-file] [--verbose-level] [--version] --output-dir
 
 ${FONT_BOLD}OPTIONS
     ${FONT_NORMAL}General options
-        ${FONT_BOLD} --active-checkers
-            ${FONT_NORMAL} The path to the file containing a list with active checkers.
         ${FONT_BOLD} -a, --all-files
             ${FONT_NORMAL} Perform static analysis on all files, tests and mocks included.
-        ${FONT_BOLD} -h, --help
-            ${FONT_NORMAL} Print a help message and exit.
+        ${FONT_BOLD} --clang-config
+            ${FONT_NORMAL} The path to the file containing a config for clang-tidy
         ${FONT_BOLD} --conan-dir
             ${FONT_NORMAL} Absolute path to conan cache directory.
+        ${FONT_BOLD} -h, --help
+            ${FONT_NORMAL} Print a help message and exit.
         ${FONT_BOLD} --compile-commands-file
             ${FONT_NORMAL} Absolute path to compile-commands.json database.
         ${FONT_BOLD} --lum-build-dir
             ${FONT_NORMAL} Absolute path to lum build directory.
+        ${FONT_BOLD} --log-file
+            ${FONT_NORMAL} Optional report name.
+        ${FONT_BOLD} --manual
+            ${FONT_NORMAL} Performs static analysis at pointed directory. Directory shall contain both source files and compile-commands.json file. 
         ${FONT_BOLD} --repo-dir
             ${FONT_NORMAL} Absolute path to repository.
         ${FONT_BOLD} --summary
@@ -125,6 +125,8 @@ ${FONT_BOLD}OPTIONS
             ${FONT_NORMAL} Integer value in range 0-2. Value 1 sets --verbose flag, value 2 sets set -x flag.
         ${FONT_BOLD} --output-dir
             ${FONT_NORMAL} Required absolute path for saving static analysis report.
+
+
 
 ${FONT_BOLD}DESCRIPTION
         ${FONT_NORMAL}Execution of script performs static analysis which uses clang-tidy and basis at compile_commands JSON files generated by CMake.
@@ -154,12 +156,12 @@ main () {
     local LUM_BUILD_DIR=$(jq -r '.lum_dir' <<< $1)
     local REPORTS_DIRECTORY=$(jq -r '.output_dir' <<< $1)
     local MANUAL_ANALYSIS_DIR=$(jq -r '.manual_analysis_dir' <<< $1)
-    local CLANG_CONFIG_JSON_FILE$(jq -r '.clang_config_json_file' <<< $1)
+    local CLANG_CONFIG_JSON_FILE=$(jq -r '.clang_config_json_file' <<< $1)
     local HCP2_DIR=$(jq -r '.hcp2_dir' <<< $1)
-    local OUTPUT_FILE_NAME=$(jq -r '.output_file' <<< $1)
+    local LOG_FILE=$(jq -r '.log_file' <<< $1)
     local SUMMARY_FLAG=$(jq -r '.summary_flag' <<< $1)
     
-    local FILE=${REPORTS_DIRECTORY}/${OUTPUT_FILE_NAME}
+    local FILE=${REPORTS_DIRECTORY}/${LOG_FILE}
     [ -f "$FILE" ] && { call_according_to_verbose_level mv "$FILE" "${FILE}_old"; }
     
     merge_compile_commands "$CONAN_CACHE_DIR" "$LUM_BUILD_DIR" "$REPORTS_DIRECTORY" "$MANUAL_ANALYSIS_DIR"
@@ -170,13 +172,10 @@ main () {
 
     for i in $(get_keys_from_json "$REPORTS_DIRECTORY" "$HCP2_DIR" "$CHECK_ALL_FILES" "$MANUAL_ANALYSIS_DIR"); do  # starts static analysis
         [ "$VERBOSE_LEVEL" != "0" ] && { echo "Performing static analysis on: ${i}"; }                                                                                                                  # FIX ME: add additional variables for including headears path 
-        clang-tidy --checks="$ACTIVE_CHECKERS" -header-filter="$HEADER_FILTER" -p "$REPORTS_DIRECTORY"/compile_commands.json "${i}" -- "$COMPILATION_OPTIONS"  >> "$REPORTS_DIRECTORY"/"$OUTPUT_FILE_NAME"
+        clang-tidy --checks="$ACTIVE_CHECKERS" -header-filter="$HEADER_FILTER" -p "$REPORTS_DIRECTORY"/compile_commands.json "${i}" -- "$COMPILATION_OPTIONS"  >> "$REPORTS_DIRECTORY"/"$LOG_FILE"
     done
     
     [ "$VERBOSE_LEVEL" != "0" ] && { echo "Output files saved in $REPORTS_DIRECTORY"; }  
-
-    ### FIX ME: Summary need to be added
-    [ "$SUMMARY_FLAG" = "true" ] && { echo -e "   Count Type" && cat /mnt/c/Users/anjk/Desktop/analysis_tst/dupa | awk -F'[][]' '{print $2}' | sort | uniq -c; }
 }
 
 validation_before_start() {
@@ -185,15 +184,14 @@ validation_before_start() {
     [ "$VERBOSE_LEVEL" != "0" ] && { echo "Default config file saved in ${CLANG_CONFIG_JSON_FILE}"; }   
     
     path_verification='[{"var":"'$HCP2_DIR'"},{"var":"'$CONAN_CACHE_DIR'"},{"var":"'$LUM_BUILD_DIR'"},{"var":"'$REPORTS_DIRECTORY'"}]'
-    for row in $(echo "$path_verification" | jq -r '.[] | @base64');
-    do
+    for row in $(echo "$path_verification" | jq -r '.[] | @base64'); do
         var=$(echo "$row" | base64 --decode  | jq "$1" | jq -r '.var')
         [ "$var" ] && [ -n "$var" ] || { echo "Path verification failed. Refer to the manual."; exit 3; }
     done
     
     [ "$MANUAL_ANALYSIS_DIR" != "" ] && { [ -d "$MANUAL_ANALYSIS_DIR" ] || { error "No such directory $MANUAL_ANALYSIS_DIR"; exit 4; } }
-    [ "$OUTPUT_FILE_NAME" ] || { OUTPUT_FILE_NAME=staticAnalysisOutput_$(date '+%Y-%m-%d').txt; } &&
-    [ "$VERBOSE_LEVEL" != "0" ] && { echo "Default value \"staticAnalysisOutput_$(date '+%Y-%m-%d').txt\" assigned to \"OUTPUT_FILE_NAME\" variable."; }
+    [ "$LOG_FILE" ] || { LOG_FILE=staticAnalysisOutput_$(date '+%Y-%m-%d').txt; } &&
+    [ "$VERBOSE_LEVEL" != "0" ] && { echo "Default value \"staticAnalysisOutput_$(date '+%Y-%m-%d').txt\" assigned to \"LOG_FILE\" variable."; }
     [[ $SUMMARY_FLAG = "false" || $SUMMARY_FLAG = "true" ]] || {  error "Summary flag value not correct."; exit 5; }
     
     local GIT_BRANCH=$1
@@ -207,7 +205,7 @@ validation_before_start() {
         "manual_analysis_dir":"'$MANUAL_ANALYSIS_DIR'",
         "clang_config_json_file":"'$CLANG_CONFIG_JSON_FILE'",
         "hcp2_dir":"'$HCP2_DIR'",
-        "output_file":"'$OUTPUT_FILE_NAME'",
+        "log_file":"'$LOG_FILE'",
         "summary_flag":"'$SUMMARY_FLAG'"}'
     
     [ "$VERBOSE_LEVEL" != "0" ] && { echo "$MAIN_ARGUMENT"; }
@@ -220,10 +218,6 @@ eval "set -- $ARGS"
 while true ;
 do
     case "$1" in
-        --active-checkers)
-            ACTIVE_CHECKERS=$(cat "$2")
-            shift 2
-        ;;
         --all-files)
             CHECK_ALL_FILES=true
             shift
@@ -266,8 +260,8 @@ do
             REPORTS_DIRECTORY=$2
             shift 2
         ;;
-        --output-file)
-            OUTPUT_FILE_NAME=$2
+        --log-file)
+            LOG_FILE=$2
             shift 2
         ;;
         --summary)
